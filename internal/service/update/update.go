@@ -61,12 +61,12 @@ func LinuxUpdateCommand(cluster dstConfig.DstConfig) (string, error) {
 	steamCmdScript := filepath.Join(steamCmdPath, "steamcmd.sh")
 	if cluster.Bin == 86 {
 		cmd = fmt.Sprintf("cd %s ; box86 ./linux32/steamcmd %s", steamCmdPath, baseCmd)
+	} else if cluster.Bin == 2664 {
+		cmd = fmt.Sprintf("cd %s ; box64 ./linux32/steamcmd +@sSteamCmdForcePlatformType linux +@sSteamCmdForcePlatformBitness 64 %s", steamCmdPath, baseCmd)
+	} else if fileUtils.Exists(steamCmdScript) {
+		cmd = fmt.Sprintf("cd %s ; ./steamcmd.sh %s", steamCmdPath, baseCmd)
 	} else {
-		if fileUtils.Exists(steamCmdScript) {
-			cmd = fmt.Sprintf("cd %s ; ./steamcmd.sh %s", steamCmdPath, baseCmd)
-		} else {
-			cmd = fmt.Sprintf("cd %s ; ./steamcmd %s", steamCmdPath, baseCmd)
-		}
+		cmd = fmt.Sprintf("cd %s ; ./steamcmd %s", steamCmdPath, baseCmd)
 	}
 	return cmd, nil
 }

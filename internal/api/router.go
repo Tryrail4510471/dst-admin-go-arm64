@@ -1,6 +1,9 @@
 package api
 
 import (
+	"log"
+	"time"
+
 	"dst-admin-go/internal/api/handler"
 	"dst-admin-go/internal/collect"
 	"dst-admin-go/internal/config"
@@ -19,7 +22,6 @@ import (
 	"dst-admin-go/internal/service/player"
 	"dst-admin-go/internal/service/schedule"
 	"dst-admin-go/internal/service/update"
-	"time"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/memstore"
@@ -107,6 +109,7 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 
 	// init
 	initCollectors(resolverService, dstConfigService)
+	go autoStartGame(updateService, gameProcess, dstConfigService)
 
 	//  handler
 	updateHandler := handler.NewUpdateHandler(updateService)
@@ -148,4 +151,29 @@ func Register(cfg *config.Config, db *gorm.DB, router *gin.RouterGroup) {
 	modHandler.RegisterRoute(router)
 	scheduleHandler.RegisterRoute(router)
 
+}
+
+func autoStartGame(updateService update.Update, gameProcess game.Process, dstConfigService dstConfig.Config) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Println("自动启动饥荒失败", rec)
+		}
+	}()
+	cfg, err := dstConfigService.GetDstConfig("Cluster_1")
+	if err != nil {
+		log.Println("读取饥荒配置失败", err)
+		return
+	}
+	clusterName := cfg.Cluster
+	if clusterName == "" {
+		clusterName = "Cluster_1"
+	}
+	log.Println("面板启动后自动更新游戏", "cluster:", clusterName)
+	if err = updateService.Update(clusterName); err != nil {
+		log.Println("自动更新失败，继续启动服务器", err)
+	}
+	log.Println("面板启动后自动启动世界", "cluster:", clusterName)
+	if err = gameProcess.StartAll(clusterName); err != nil {
+		log.Println("自动启动世界失败", err)
+	}
 }
