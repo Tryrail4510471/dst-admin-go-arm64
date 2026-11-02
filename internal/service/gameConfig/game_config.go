@@ -1,13 +1,16 @@
 package gameConfig
 
 import (
+	"log"
+	"path/filepath"
+	"strings"
+
 	"dst-admin-go/internal/pkg/utils/collectionUtils"
 	"dst-admin-go/internal/pkg/utils/dstUtils"
 	"dst-admin-go/internal/pkg/utils/fileUtils"
 	"dst-admin-go/internal/service/archive"
 	"dst-admin-go/internal/service/levelConfig"
-	"path/filepath"
-	"strings"
+	"dst-admin-go/internal/service/mod"
 
 	"github.com/go-ini/ini"
 )
@@ -345,5 +348,14 @@ func (p *GameConfig) SaveConfig(clusterName string, homeConfig HomeConfigVO) {
 			serverModSetup += "ServerModSetup(\"" + workshopId + "\")\n"
 		}
 		fileUtils.WriterTXT(p.archive.GetModSetup(clusterName), serverModSetup)
+		if cfg, err := p.archive.DstConfig(clusterName); err != nil {
+			log.Println("读取饥荒配置失败，跳过模组安装", err)
+		} else {
+			for _, workshopId := range workshopIds {
+				if _, err := mod.InstallWorkshopMod(cfg, clusterName, workshopId); err != nil {
+					log.Println("安装模组失败", workshopId, err)
+				}
+			}
+		}
 	}
 }

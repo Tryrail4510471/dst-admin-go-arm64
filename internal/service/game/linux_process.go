@@ -224,6 +224,8 @@ func (p *LinuxProcess) Command(clusterName, levelName, command string) error {
 	// parsing strips or reinterprets those quotes before `screen` receives them,
 	// causing DST to execute c_give(cutgrass, 1) or print(FOO) instead of the
 	// intended Lua.  Pass argv directly so the command text is delivered exactly.
+	// 发布包前端把快捷指令里的引号写成 \"，Lua 收到后无法执行。
+	command = strings.ReplaceAll(command, `\"`, `"`)
 	return exec.Command(
 		"screen",
 		"-S", p.SessionName(clusterName, levelName),

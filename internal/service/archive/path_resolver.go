@@ -34,6 +34,10 @@ func NewPathResolver(dstConfig dstConfig.Config) (*PathResolver, error) {
 	}, nil
 }
 
+func (r *PathResolver) DstConfig(clusterName string) (dstConfig.DstConfig, error) {
+	return r.dstConfig.GetDstConfig(clusterName)
+}
+
 func (r *PathResolver) KleiBasePath(clusterName string) string {
 	config, err := r.dstConfig.GetDstConfig(clusterName)
 	if err != nil {

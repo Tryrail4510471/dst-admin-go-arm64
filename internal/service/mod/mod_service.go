@@ -773,29 +773,11 @@ func (s *ModService) getModInfoConfig(clusterName, lang, modId string) map[strin
 				log.Println("下载mod失败，请检查steamcmd路径是否配置正确", err)
 				return make(map[string]interface{})
 			}
-		} else {
-			var cmd *exec.Cmd
-			if fileUtils.Exists(filepath.Join(steamcmd, "steamcmd")) {
-				cmd = exec.Command(filepath.Join(steamcmd, "steamcmd"), "+login anonymous", "+force_install_dir", modDownloadPath, "+workshop_download_item 322330 "+modId, "+quit")
-			} else {
-				cmd = exec.Command(filepath.Join(steamcmd, "steamcmd.sh"), "+login anonymous", "+force_install_dir", modDownloadPath, "+workshop_download_item 322330 "+modId, "+quit")
-			}
-
-			log.Println("正在下载模组 command:", cmd)
-			output, err := cmd.CombinedOutput()
-			if err != nil {
-				log.Println("下载mod失败，请检查steamcmd路径是否配置正确", err)
-				return make(map[string]interface{})
-			}
-
-			// 解析 SteamCMD 输出
-			re := regexp.MustCompile(`Downloaded item \d+ to "([^"]+)"`)
-			match := re.FindStringSubmatch(string(output))
-			if len(match) < 2 {
-				log.Println("Error parsing output:", string(output))
-				return make(map[string]interface{})
-			}
-			log.Println("Mod downloaded to:", match[1])
+		} else if installed, err := installWorkshopMod(config, clusterName, modId); err != nil {
+			log.Println("下载mod失败，请检查steamcmd路径是否配置正确", err)
+			return make(map[string]interface{})
+		} else if installed != "" {
+			modPath = installed
 		}
 	}
 
@@ -806,6 +788,120 @@ func (s *ModService) getModInfoConfig(clusterName, lang, modId string) map[strin
 		return make(map[string]interface{})
 	}
 	return s.readModInfo(lang, modId, modinfoPath)
+}
+
+// InstallWorkshopMod 下载创意工坊模组，并复制到专用服务器实际加载的目录。
+func InstallWorkshopMod(config dstConfig.DstConfig, clusterName, modId string) (string, error) {
+	return installWorkshopMod(config, clusterName, modId)
+}
+
+func installWorkshopMod(config dstConfig.DstConfig, clusterName, modId string) (string, error) {
+	installDir := config.Force_install_dir
+	if config.Beta == 1 {
+		installDir += "-beta"
+	}
+	installed := filepath.Join(installDir, "ugc_mods", "content", "322330", modId)
+	if fileUtils.Exists(filepath.Join(installed, "modinfo.lua")) {
+		return installed, nil
+	}
+
+	src := filepath.Join(installDir, "steamapps", "workshop", "content", "322330", modId)
+	if !fileUtils.Exists(filepath.Join(src, "modinfo.lua")) {
+		downloaded, err := runWorkshopDownload(config, installDir, modId)
+		if err != nil {
+			return "", err
+		}
+		if downloaded != "" {
+			src = downloaded
+		}
+	}
+	if !fileUtils.Exists(filepath.Join(src, "modinfo.lua")) {
+		return "", fmt.Errorf("未找到模组 %s 的 modinfo.lua", modId)
+	}
+
+	targets := []string{
+		installed,
+		filepath.Join(installDir, "ugc_mods", clusterName, "Master", "content", "322330", modId),
+		filepath.Join(installDir, "ugc_mods", clusterName, "Caves", "content", "322330", modId),
+		filepath.Join(installDir, "mods", "workshop-"+modId),
+	}
+	for _, target := range targets {
+		if err := copyModTree(src, target); err != nil {
+			return "", err
+		}
+	}
+	return installed, nil
+}
+
+func runWorkshopDownload(config dstConfig.DstConfig, installDir, modId string) (string, error) {
+	steamcmd := config.Steamcmd
+	args := []string{
+		"+@sSteamCmdForcePlatformType", "linux",
+		"+@sSteamCmdForcePlatformBitness", "64",
+		"+force_install_dir", installDir,
+		"+login", "anonymous",
+		"+workshop_download_item", "322330", modId,
+		"+quit",
+	}
+	var cmd *exec.Cmd
+	switch config.Bin {
+	case 2664:
+		cmd = exec.Command("box64", append([]string{filepath.Join(steamcmd, "linux32", "steamcmd")}, args...)...)
+	case 86:
+		cmd = exec.Command("box86", append([]string{filepath.Join(steamcmd, "linux32", "steamcmd")}, args...)...)
+	default:
+		bin := filepath.Join(steamcmd, "steamcmd")
+		if !fileUtils.Exists(bin) {
+			bin = filepath.Join(steamcmd, "steamcmd.sh")
+		}
+		cmd = exec.Command(bin, args...)
+	}
+	cmd.Dir = steamcmd
+	log.Println("正在下载模组 command:", cmd.Args)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%w: %s", err, string(output))
+	}
+	re := regexp.MustCompile(`Downloaded item \d+ to "([^"]+)"`)
+	if match := re.FindStringSubmatch(string(output)); len(match) >= 2 {
+		log.Println("Mod downloaded to:", match[1])
+		return match[1], nil
+	}
+	return filepath.Join(installDir, "steamapps", "workshop", "content", "322330", modId), nil
+}
+
+func copyModTree(src, dst string) error {
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0755)
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.Create(target)
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		_, err = io.Copy(out, in)
+		return err
+	})
 }
 
 // getV1ModInfoConfig 从v1 mod中获取配置
@@ -881,6 +977,10 @@ func (s *ModService) getV1ModInfoConfig(clusterName, lang, modid, fileUrl string
 // getDstUcgsModsInstalledPath 获取饥荒本身modid的位置
 func (s *ModService) getDstUcgsModsInstalledPath(clusterName, modid string) (string, bool) {
 	config, _ := s.dstConfig.GetDstConfig(clusterName)
+	flatModPath := filepath.Join(config.Force_install_dir, "ugc_mods", "content", "322330", modid)
+	if fileUtils.Exists(filepath.Join(flatModPath, "modinfo.lua")) {
+		return flatModPath, true
+	}
 	var masterModFilePath, caveModFilePath string
 
 	if config.Ugc_directory != "" {
