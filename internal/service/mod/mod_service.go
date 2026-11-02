@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"dst-admin-go/internal/model"
+	"dst-admin-go/internal/pkg/utils/dstUtils"
 	"dst-admin-go/internal/pkg/utils/fileUtils"
 	"dst-admin-go/internal/pkg/utils/shellUtils"
 	"dst-admin-go/internal/service/archive"
@@ -412,6 +413,7 @@ func (s *ModService) SubscribeModByModId(clusterName, modId, lang string) (*mode
 		existingMod.ModConfig = modConfig
 		existingMod.Update = false
 		s.db.Save(existingMod)
+		s.persistSubscribedMod(clusterName, modId)
 		return existingMod, nil
 	}
 
@@ -445,7 +447,51 @@ func (s *ModService) SubscribeModByModId(clusterName, modId, lang string) (*mode
 	}
 
 	err = s.db.Create(newModInfo).Error
+	if err == nil {
+		s.persistSubscribedMod(clusterName, modId)
+	}
 	return newModInfo, err
+}
+
+func (s *ModService) persistSubscribedMod(clusterName, modId string) {
+	config, err := s.dstConfig.GetDstConfig(clusterName)
+	if err != nil {
+		log.Println("订阅后保存模组失败", err)
+		return
+	}
+	base := s.pathResolver.ClusterPath(clusterName)
+	entryKey := "workshop-" + modId
+	for _, levelName := range []string{"Master", "Caves"} {
+		dir := filepath.Join(base, levelName)
+		if !fileUtils.Exists(dir) {
+			continue
+		}
+		path := filepath.Join(dir, "modoverrides.lua")
+		content := "return {}\n"
+		if data, readErr := os.ReadFile(path); readErr == nil {
+			content = string(data)
+		}
+		if strings.Contains(content, entryKey) {
+			continue
+		}
+		snippet := "  [\"" + entryKey + "\"] = { configuration_options = {}, enabled = true },\n"
+		if idx := strings.Index(content, "return {"); idx >= 0 {
+			insertAt := idx + len("return {")
+			content = content[:insertAt] + "\n" + snippet + content[insertAt:]
+		} else {
+			content = "return {\n" + snippet + "}\n"
+		}
+		if writeErr := fileUtils.WriterTXT(path, content); writeErr != nil {
+			log.Println("写入 modoverrides 失败", path, writeErr)
+		}
+	}
+	masterData, _ := os.ReadFile(filepath.Join(base, "Master", "modoverrides.lua"))
+	if err = dstUtils.DedicatedServerModsSetup(config, string(masterData)); err != nil {
+		log.Println("写入 dedicated_server_mods_setup 失败", err)
+	}
+	if _, err = installWorkshopMod(config, clusterName, modId); err != nil {
+		log.Println("安装模组失败", modId, err)
+	}
 }
 
 // GetMyModList 获取已订阅的模组列表

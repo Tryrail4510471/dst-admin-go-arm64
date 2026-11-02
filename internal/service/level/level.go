@@ -8,6 +8,7 @@ import (
 	"dst-admin-go/internal/service/game"
 	"dst-admin-go/internal/service/gameConfig"
 	"dst-admin-go/internal/service/levelConfig"
+	"dst-admin-go/internal/service/mod"
 	"log"
 	"path/filepath"
 	"strconv"
@@ -187,6 +188,11 @@ func (l *LevelService) UpdateLevels(clusterName string, levels []levelConfig.Lev
 	for i := range levels {
 		config, _ := l.dstConfig.GetDstConfig(clusterName)
 		dstUtils.DedicatedServerModsSetup(config, levels[i].Modoverrides)
+		for _, workshopId := range dstUtils.WorkshopIds(levels[i].Modoverrides) {
+			if _, err := mod.InstallWorkshopMod(config, clusterName, workshopId); err != nil {
+				log.Println("安装模组失败", workshopId, err)
+			}
+		}
 		err := l.UpdateLevel(clusterName, &levels[i])
 		if err != nil {
 			return err
